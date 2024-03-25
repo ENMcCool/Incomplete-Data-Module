@@ -1,0 +1,226 @@
+#Code for Q2
+# Set the working directory
+setwd("~/Downloads")
+
+# Load dataset
+load("dataex2.Rdata")
+
+library(mice)
+
+set.seed(1)
+
+coverage_probability_mice_list <- numeric(100)
+coverage_probability_bootstrap_list <- numeric(100)
+
+# Load specific functions from mice package
+loadNamespace("mice")
+
+
+for (i in 1:100) {
+# let's try and just do this with one dataset 
+data = dataex2[, , i]
+
+# Perform multiple imputation with stochastic regression imputation
+imputed_stochastic <- mice(data, m = 20, method = "norm.nob", seed = 1)
+imputed_bootstrap <- mice(data = data, m = 20, method = "norm.boot", maxit = 50, seed = 1)
+
+#bootstrap
+imputed_datasets_boot <- complete(imputed_bootstrap, action = "long", include = TRUE)
+# Step 2: Perform Regression Analysis with Standard Errors
+lm_results <- lapply(split(imputed_datasets_boot, imputed_datasets_boot$.imp), function(dat){
+  summary(lm(Y ~ X, data = dat))
+})
+
+# Extract beta1 coefficients and their standard errors
+beta_results <- sapply(lm_results, function(model_summary) {
+  coef(model_summary)[2, 1]  # Coefficient for X
+})
+se_results <- sapply(lm_results, function(model_summary) {
+  coef(model_summary)[2, 2]  # Standard error for X coefficient
+})
+
+# Combine Results
+combined_beta <- cbind(beta = beta_results, se = se_results)
+
+true_beta1 <- 3
+
+# Extract beta1 coefficients and their standard errors
+beta1_estimates <- combined_beta[, "beta"]
+se_beta1_estimates <- combined_beta[, "se"]
+
+# Construct confidence intervals
+ci_lower <- beta1_estimates - 1.96 * se_beta1_estimates
+ci_upper <- beta1_estimates + 1.96 * se_beta1_estimates
+
+# Check if true value of beta1 falls within the confidence intervals
+coverage_count <- sum(ci_lower <= true_beta1 & ci_upper >= true_beta1)
+
+# Calculate empirical coverage probability
+coverage_probability_mice <- coverage_count / nrow(combined_beta)
+
+coverage_probability_bootstrap_list[i] <- coverage_probability_mice
+
+
+
+
+#stochastic
+imputed_datasets_boot <- complete(imputed_stochastic, action = "long", include = TRUE)
+# Step 2: Perform Regression Analysis with Standard Errors
+lm_results <- lapply(split(imputed_datasets_boot, imputed_datasets_boot$.imp), function(dat){
+  summary(lm(Y ~ X, data = dat))
+})
+
+# Extract beta1 coefficients and their standard errors
+beta_results <- sapply(lm_results, function(model_summary) {
+  coef(model_summary)[2, 1]  # Coefficient for X
+})
+se_results <- sapply(lm_results, function(model_summary) {
+  coef(model_summary)[2, 2]  # Standard error for X coefficient
+})
+
+# Combine Results
+combined_beta <- cbind(beta = beta_results, se = se_results)
+
+true_beta1 <- 3
+
+# Extract beta1 coefficients and their standard errors
+beta1_estimates <- combined_beta[, "beta"]
+se_beta1_estimates <- combined_beta[, "se"]
+
+# Construct confidence intervals
+ci_lower <- beta1_estimates - 1.96 * se_beta1_estimates
+ci_upper <- beta1_estimates + 1.96 * se_beta1_estimates
+
+# Check if true value of beta1 falls within the confidence intervals
+coverage_count <- sum(ci_lower <= true_beta1 & ci_upper >= true_beta1)
+
+# Calculate empirical coverage probability
+coverage_probability_mice <- coverage_count / nrow(combined_beta)
+
+coverage_probability_mice_list[i] <- coverage_probability_mice
+}
+coverage_probability_mice_list
+
+
+
+mice_matrix <- matrix(unlist(coverage_probability_mice_list), nrow = 100, byrow = TRUE)
+bootstrap_matrix <- matrix(unlist(coverage_probability_bootstrap_list), nrow = 100, byrow = TRUE)
+data_df <- data.frame(
+  Method = rep(c("Stochastic Regression Imputation", "Bootstrap-based"), each = 100),
+  Coverage_Probability = c(mice_matrix, bootstrap_matrix)
+)
+
+library(ggplot2)
+
+
+boxplot <- ggplot(data_df, aes(x = Method, y = Coverage_Probability, fill = Method)) +
+  geom_boxplot() +
+  labs(title = "Comparison of Coverage Probabilities",
+       x = NULL,  # Remove x-axis label
+       y = "Coverage Probability") +
+  theme_minimal() +
+  theme(axis.text.x = element_blank())  # Remove x-axis text
+
+print(boxplot)
+
+
+
+
+
+
+
+#Code for Question 3b.
+    # Load necessary packages
+library(maxLik)
+
+# Load data
+load("dataex3.Rdata")
+
+# Define log-likelihood
+log_likelihood <- function(params, x, censor) {
+  mu <- params[1]
+  sigma2 <- params[2]
+  
+  # Calculate log likelihood
+  log_likelihood <- sum(censor * dnorm(x, mean = mu, sd = sqrt(sigma2), log = TRUE) + 
+                          (1 - censor) * pnorm(x, mean = mu, sd = sqrt(sigma2), log.p = TRUE, lower.tail = FALSE))
+  
+  return(-log_likelihood)  # Negative log-likelihood for minimization
+}
+
+MLE_mu <- function(x, censor, mu_init) {
+  params_init <- c(mu_init, 1.5^2)  # Initial guess for mu and sigma^2
+  
+  #  maxLik find MLE
+  result <- maxLik(log_likelihood, start = params_init, x = x, censor = censor, method = "BFGS")
+  
+  
+  mu_estimate <- coef(result)[1]
+  
+  return(mu_estimate)
+}
+
+x <- dataex3$X
+censor <- dataex3$R
+
+mu_init <- mean(x)
+
+mu_estimate <- MLE_mu(x, censor, mu_init)
+cat("Maximum likelihood estimate of mu:", mu_estimate, "\n")
+
+
+#Code for Q5
+
+    # Load data
+load("~/Downloads/dataex5.Rdata")
+library(maxLik)
+
+
+log_likelihood <- function(beta, y, x) {
+  pi <- exp(beta[1] + x * beta[2]) / (1 + exp(beta[1] + x * beta[2]))
+  log_lik <- sum(y * log(pi) + (1 - y) * log(1 - pi))
+  return(-log_lik) # Negative log-likelihood for optimization
+}
+
+
+EM_algorithm <- function(data, beta_init, max_iter = 100, tol = 1e-6) {
+  
+  data_without_na <- data[complete.cases(data), ]  # Rows with NA removed
+  data_with_na <- data[rowSums(is.na(data)) > 0, ]  # Rows with NA present in any column
+  # Initial values
+  beta <- beta_init
+  iter <- 0
+  converged <- FALSE
+  
+  while (!converged & iter < max_iter) {
+    # E-step: Compute expected complete data log-likelihood
+    
+    expected_log_like <-function(beta_star){
+      x = data_with_na$X
+      pi <- exp(beta_star[1] + x * beta_star[2]) / (1 + exp(beta_star[1] + x * beta_star[2]))
+      pi_old <- exp(beta[1] + x * beta[2]) / (1 + exp(beta[1] + x * beta[2]))
+      
+      return(log_likelihood(beta_star,data_without_na$Y,data_without_na$X) + sum(pi_old*log(pi) +(1-pi_old)*log(1-pi)))}
+    
+    # M-step: Maximize expected complete data log-likelihood
+    result <- maxLik(expected_log_like, start = beta)
+    new_beta <- coef(result)
+    
+    # Check convergence
+    if (sum((new_beta - beta)^2) < tol) {
+      converged <- TRUE
+    }
+    
+    beta <- new_beta
+    iter <- iter + 1
+  }
+  
+  return(beta)
+}
+
+
+# Example usage
+initial_beta <- c(1, 1) # Initial guess for beta
+result_beta <- EM_algorithm(dataex5, initial_beta)
+result_beta
+
